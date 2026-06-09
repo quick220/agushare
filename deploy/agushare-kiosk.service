@@ -8,7 +8,7 @@ Type=simple
 User=root
 Environment=DISPLAY=:0
 ExecStartPre=/bin/sleep 10
-ExecStart=/bin/bash /opt/agushare/deploy/kiosk.sh
+ExecStart=/bin/bash /root/agushare/deploy/kiosk.sh
 Restart=always
 RestartSec=10
 KillMode=process

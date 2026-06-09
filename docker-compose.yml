@@ -1,28 +1,6 @@
 version: "3.8"
 
 services:
-  # ---- 后端 API 代理 ----
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: agushare-backend:latest
-    container_name: agushare-backend
-    network_mode: host
-    restart: unless-stopped
-    environment:
-      - TZ=Asia/Shanghai
-      - CACHE_SECONDS=5
-    volumes:
-      - stock_data:/data
-    cpus: "0.3"
-    memory: "128M"
-    healthcheck:
-      test: ["CMD", "pidof", "uvicorn"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-
   # ---- 前端 Web 服务 ----
   nginx:
     image: nginx:alpine-slim
@@ -34,11 +12,20 @@ services:
       - ./frontend:/usr/share/nginx/html:ro,Z
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_started
     cpus: "0.2"
     memory: "64M"
 
-volumes:
-  stock_data:
+# 注意：后端 (FastAPI) 当前通过宿主机 systemd 运行（端口 5000）
+# 如需容器化后端，取消下方注释并注释上面 volumes 中的 :Z 标志
+# backend:
+#   build:
+#     context: ./backend
+#     dockerfile: Dockerfile
+#   image: agushare-backend:latest
+#   container_name: agushare-backend
+#   network_mode: host
+#   restart: unless-stopped
+#   environment:
+#     - TZ=Asia/Shanghai
+#   cpus: "0.3"
+#   memory: "128M"

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────
-# A股大屏 - Armbian 一键部署脚本
+# A股大屏 - Armbian 一键部署脚本（Systemd + 原生Python）
 # 适用于 aarch64 架构的 Armbian 系统
 # ──────────────────────────────────────────────────────
 set -e
@@ -20,88 +20,85 @@ echo ""
 # ─── 检测架构 ───────────────────────────────────────
 ARCH=$(uname -m)
 echo "🔍 检测架构: $ARCH"
-if [ "$ARCH" != "aarch64" ]; then
-    echo "⚠️  非 ARM64 架构，Podman 镜像可能需要额外配置"
-fi
 
-# ─── 安装 Podman ────────────────────────────────────
+# ─── 安装系统依赖 ────────────────────────────────────
 echo ""
-echo "📦 1/5 安装 Podman & podman-compose..."
+echo "📦 1/5 安装系统依赖..."
 
-if ! command -v podman &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y -qq podman podman-compose
-    echo "   ✅ Podman 已安装: $(podman --version)"
-else
-    echo "   ✅ Podman 已存在: $(podman --version)"
-fi
+apt-get update -qq
+apt-get install -y -qq python3 python3-pip python3-venv nginx
+echo "   ✅ 系统依赖安装完成"
 
-if ! command -v podman-compose &>/dev/null; then
-    pip3 install podman-compose 2>/dev/null || apt-get install -y -qq podman-compose
-fi
-
-# ─── 配置 Podman Rootless 兼容 ──────────────────────
+# ─── 安装 Python 依赖 ────────────────────────────────
 echo ""
-echo "🔧 2/5 配置 Podman..."
-
-# 确保使用 crun 运行时（更轻量）
-if podman info 2>/dev/null | grep -q "ociRuntime"; then
-    CURRENT_RUNTIME=$(podman info 2>/dev/null | grep -A1 "ociRuntime" | grep "name" | awk -F'"' '{print $2}')
-    echo "   当前 OCI 运行时: ${CURRENT_RUNTIME:-默认}"
-fi
-
-# 启用 Podman socket（供 podman-compose 使用）
-systemctl enable --now podman.socket 2>/dev/null || true
-
-# ─── 拉取镜像 ────────────────────────────────────────
-echo ""
-echo "🐳 3/5 拉取 & 构建镜像（首次可能较慢）..."
+echo "🐍 2/5 安装 Python 依赖..."
 
 cd "$(dirname "$0")/.."
+pip3 install -r backend/requirements.txt
+echo "   ✅ Python 依赖安装完成"
 
-echo "   → 构建 backend 镜像..."
-podman build -t agushare-backend:latest ./backend
-
-echo "   → 拉取 nginx:alpine-slim..."
-podman pull docker.io/nginx:alpine-slim
-
-# ─── SELinux 处理 ────────────────────────────────────
+# ─── 配置 Nginx 反向代理 ─────────────────────────────
 echo ""
-echo "🛡️  4/5 处理 SELinux 权限..."
+echo "🔧 3/5 配置 Nginx..."
 
-if command -v getenforce &>/dev/null; then
-    if [ "$(getenforce)" = "Enforcing" ]; then
-        echo "   ⚠️  SELinux 为 Enforcing 模式，设置 volume 上下文..."
-        chcon -Rt container_file_t ./frontend 2>/dev/null || true
-        chcon -Rt container_file_t ./nginx 2>/dev/null || true
-        echo "   ✅ SELinux 上下文已设置"
-    else
-        echo "   ✅ SELinux 未启用，跳过"
-    fi
+cp nginx/default.conf /etc/nginx/sites-enabled/agushare 2>/dev/null || \
+    cp nginx/default.conf /etc/nginx/conf.d/agushare.conf
+systemctl enable nginx
+systemctl restart nginx
+echo "   ✅ Nginx 已配置（端口 8081）"
+
+# ─── 配置后端 Systemd 服务 ───────────────────────────
+echo ""
+echo "🚀 4/5 配置后端服务..."
+
+cat > /etc/systemd/system/agushare-backend.service << 'SERVICE'
+[Unit]
+Description=A股大屏 Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/agushare/backend
+ExecStart=/usr/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port 5000
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable agushare-backend
+systemctl restart agushare-backend
+echo "   ✅ 后端服务已启动（端口 5000）"
+
+# ─── 安装 kiosk 全屏显示（可选）──────────────────────
+echo ""
+echo "🖥️  5/5 安装 HDMI 全屏显示..."
+
+if command -v xorg &>/dev/null; then
+    echo "   ✅ Xorg 已安装"
 else
-    echo "   ✅ SELinux 不可用，跳过"
+    echo "   ⚠️  未检测到 Xorg。如需电视全屏显示，请运行："
+    echo "      apt install xorg surf xdotool xserver-xorg-video-fbdev"
+    echo "      bash deploy/kiosk.sh --install"
 fi
 
-# ─── 启动服务 ────────────────────────────────────────
-echo ""
-echo "🚀 5/5 启动 A股大屏服务..."
-
-podman-compose down 2>/dev/null || true
-podman-compose up -d
-
+# ─── 完成 ────────────────────────────────────────────
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║          ✅ 部署完成！                     ║"
 echo "╠══════════════════════════════════════════╣"
 echo "║                                          ║"
 echo "║  访问地址：                                ║"
-echo "║  http://$(hostname -I 2>/dev/null | awk '{print $1}'):8081    ║"
+echo "║  http://${IP:-localhost}:8081             ║"
 echo "║                                          ║"
 echo "║  管理命令：                                ║"
-echo "║  podman-compose logs -f  查看日志          ║"
-echo "║  podman-compose down     停止服务          ║"
-echo "║  podman-compose up -d    启动服务          ║"
-echo "║  podman-compose restart 重启服务           ║"
+echo "║  systemctl status agushare-backend        ║"
+echo "║  systemctl restart agushare-backend       ║"
+echo "║  journalctl -u agushare-backend -f        ║"
 echo "║                                          ║"
 echo "║  电视全屏显示：                             ║"
 echo "║  bash deploy/kiosk.sh       启动一次        ║"
