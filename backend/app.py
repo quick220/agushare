@@ -627,20 +627,25 @@ async def _get_market_overview_data() -> dict:
         "fields": "f169,f170,f171",
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
     }
-    headers = {**EM_HEADERS, "Host": _EM_HOST}
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), headers=headers) as client:
-            resp = await client.get(url, params=params)
-            raw = resp.json()
-            d = raw.get("data", {})
-            advance = d.get("f169", 0) or 0
-            decline = d.get("f170", 0) or 0
-            even = d.get("f171", 0) or 0
-            return {"advance": advance, "decline": decline, "even": even,
-                    "total": advance + decline + even}
-    except Exception as e:
-        log.warning(f"东方财富涨跌家数获取失败: {e}")
-        return {"advance": 0, "decline": 0, "even": 0, "total": 0}
+    headers = {**EM_HEADERS, "Host": _EM_HOST, "Connection": "close"}
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), headers=headers) as client:
+                resp = await client.get(url, params=params)
+                raw = resp.json()
+                d = raw.get("data", {})
+                advance = d.get("f169", 0) or 0
+                decline = d.get("f170", 0) or 0
+                even = d.get("f171", 0) or 0
+                if advance > 0 or decline > 0:
+                    return {"advance": advance, "decline": decline, "even": even,
+                            "total": advance + decline + even}
+                log.warning(f"东方财富涨跌家数返回空 (attempt {attempt+1})")
+        except Exception as e:
+            log.warning(f"东方财富涨跌家数获取失败 (attempt {attempt+1}): {e}")
+        if attempt == 0:
+            await asyncio.sleep(1)
+    return {"advance": 0, "decline": 0, "even": 0, "total": 0}
 
 
 async def _fetch_cls_news() -> dict:
