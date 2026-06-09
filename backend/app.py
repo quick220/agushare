@@ -625,28 +625,84 @@ async def _get_stocks_data() -> dict:
 
 
 async def _get_market_overview_data() -> dict:
-    """获取全市场涨跌家数（多端点+指数退避，armcube 防断连）"""
+    """获取全市场涨跌家数（多源降级 + 指数退避）"""
+    # 源1：乐咕乐股网（主用，稳定可靠）
+    result = await _fetch_market_activity_from_legulegu()
+    if result:
+        return result
+
+    # 源2：东方财富（备选，部分网络不可达）
+    result = await _fetch_market_activity_from_eastmoney()
+    if result:
+        return result
+
+    log.error("涨跌家数所有数据源均失败")
+    return {"advance": 0, "decline": 0, "even": 0, "total": 0}
+
+
+async def _fetch_market_activity_from_legulegu() -> Optional[dict]:
+    """从乐咕乐股网解析全市场涨跌家数（HTML 表格）"""
+    url = "https://legulegu.com/stockdata/market-activity"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
+                resp = await client.get(url)
+                html = resp.text
+
+            # 提取第一个数据表格中的涨跌家数
+            table_match = re.search(r"<table[^>]*>.*?</table>", html, re.DOTALL)
+            if not table_match:
+                log.warning(f"乐咕乐股未找到数据表格 (attempt {attempt + 1})")
+                continue
+
+            cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", table_match.group(0), re.DOTALL)
+            data = {}
+            for i in range(0, len(cells) - 1, 2):
+                key = re.sub(r"<[^>]+>", "", cells[i]).strip()
+                val = re.sub(r"<[^>]+>", "", cells[i + 1]).strip()
+                if key in ("上涨", "下跌", "平盘") and val.isdigit():
+                    data[key] = int(val)
+
+            advance = data.get("上涨", 0)
+            decline = data.get("下跌", 0)
+            even = data.get("平盘", 0)
+            if advance > 0 or decline > 0:
+                log.info(f"乐咕乐股数据: 上涨{advance} 下跌{decline} 平盘{even}")
+                return {"advance": advance, "decline": decline, "even": even,
+                        "total": advance + decline + even}
+
+            log.warning(f"乐咕乐股数据异常 (attempt {attempt + 1})")
+        except Exception as e:
+            log.warning(f"乐咕乐股请求失败 (attempt {attempt + 1}): {e}")
+
+        await asyncio.sleep(1)
+
+    return None
+
+
+async def _fetch_market_activity_from_eastmoney() -> Optional[dict]:
+    """从东方财富获取涨跌家数（备选源）"""
     params = {
         "secid": "1.000001",
         "fields": "f169,f170,f171",
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
     }
-
-    # 端点优先级：push2（实时主用）→ push2his（历史备用）
     endpoints = [
         ("push2", _EM_HOSTS["push2"]),
         ("push2his", _EM_HOSTS["push2his"]),
     ]
-
-    last_error = None
     for name, domain in endpoints:
         ip = _resolve_em_ipv4(name)
         url = f"http://{ip}/api/qt/stock/get"
         headers = {**EM_HEADERS, "Host": domain}
 
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(12.0), headers=headers) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
                     resp = await client.get(url, params=params)
                     raw = resp.json()
                     d = raw.get("data", {})
@@ -656,15 +712,12 @@ async def _get_market_overview_data() -> dict:
                     if advance > 0 or decline > 0:
                         return {"advance": advance, "decline": decline, "even": even,
                                 "total": advance + decline + even}
-                    log.warning(f"涨跌家数返回空 [{name}] (attempt {attempt+1})")
+                    log.warning(f"东方财富涨跌家数返回空 [{name}] (attempt {attempt + 1})")
             except Exception as e:
-                last_error = e
-                log.warning(f"涨跌家数获取失败 [{name}] (attempt {attempt+1}): {e}")
-            await asyncio.sleep(1 + attempt * 2)  # 指数退避: 1s, 3s, 5s
+                log.warning(f"东方财富涨跌家数失败 [{name}] (attempt {attempt + 1}): {e}")
+            await asyncio.sleep(1 + attempt * 2)
 
-    if last_error:
-        log.error(f"涨跌家数所有端点均失败，最终错误: {last_error}")
-    return {"advance": 0, "decline": 0, "even": 0, "total": 0}
+    return None
 
 
 async def _fetch_cls_news() -> dict:
