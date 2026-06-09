@@ -814,32 +814,20 @@ async def _get_stocks_data() -> dict:
 
 
 async def _get_market_overview_data() -> dict:
-    """获取全市场涨跌家数（多源降级 + 指数退避 + 超时保护）"""
+    """获取全市场涨跌家数（多源降级 + 5秒超时保护）"""
     try:
-        # 源1：乐咕乐股网（主用），总超时 8 秒
+        # 源1：乐咕乐股网（主用，正常0.6s响应）
         result = await asyncio.wait_for(
-            _fetch_market_activity_from_legulegu(), timeout=8.0
+            _fetch_market_activity_from_legulegu(), timeout=5.0
         )
         if result:
             return result
     except (asyncio.TimeoutError, asyncio.CancelledError):
-        log.warning("乐咕乐股请求超时(8s)")
+        log.warning("乐咕乐股请求超时(5s)")
     except Exception as e:
         log.warning(f"乐咕乐股请求异常: {e}")
 
-    try:
-        # 源2：东方财富（备选，部分网络不可达），总超时 8 秒
-        result = await asyncio.wait_for(
-            _fetch_market_activity_from_eastmoney(), timeout=8.0
-        )
-        if result:
-            return result
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        log.warning("东方财富涨跌家数请求超时(8s)")
-    except Exception as e:
-        log.warning(f"东方财富涨跌家数请求异常: {e}")
-
-    log.error("涨跌家数所有数据源均失败")
+    log.warning("涨跌家数数据源不可用，返回零值")
     return {"advance": 0, "decline": 0, "even": 0, "total": 0}
 
 
