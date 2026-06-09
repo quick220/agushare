@@ -116,6 +116,141 @@ def _set_cache(key: str, data):
     _cache[key] = (time.time(), data)
 
 
+# ─── 东方财富 API ───────────────────────────────────
+EM_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://quote.eastmoney.com/",
+}
+
+
+def _to_secid(code: str) -> Optional[str]:
+    """转换 sh/sz 代码为东方财富 secid 格式 (sh→1., sz→0.)"""
+    if len(code) < 8:
+        return None
+    market = code[:2]
+    raw = code[2:]
+    if not raw.isdigit():
+        return None
+    if market == 'sh':
+        return f'1.{raw}'
+    elif market == 'sz':
+        return f'0.{raw}'
+    return None
+
+
+async def _fetch_em_intraday(code: str, retries: int = 2) -> Optional[dict]:
+    """从东方财富获取指数/个股分时数据"""
+    secid = _to_secid(code)
+    if not secid:
+        return None
+    params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "ndays": "1",
+        "iscr": "0",
+    }
+    url = "http://push2his.eastmoney.com/api/qt/stock/trends2/get"
+
+    for attempt in range(retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=EM_HEADERS) as client:
+                resp = await client.get(url, params=params)
+                raw = resp.json()
+                d = raw.get("data", {})
+                trends_raw = d.get("trends", [])
+                trends = []
+                for t in trends_raw:
+                    parts = t.split(",")
+                    if len(parts) >= 8:
+                        try:
+                            # 格式: time,open,close,high,low,volume,amount,avg_price
+                            trends.append({
+                                "time": parts[0],
+                                "price": float(parts[2]) if parts[2] else 0,
+                                "high": float(parts[3]) if parts[3] else 0,
+                                "low": float(parts[4]) if parts[4] else 0,
+                                "volume": float(parts[5]) if parts[5] else 0,
+                                "amount": float(parts[6]) if parts[6] else 0,
+                            })
+                        except (ValueError, IndexError):
+                            continue
+                if trends:
+                    return {
+                        "code": code,
+                        "name": d.get("name", ""),
+                        "prePrice": d.get("prePrice", 0),
+                        "trends": trends,
+                        "count": len(trends),
+                    }
+                log.warning(f"东方财富分时返回空 [{code}] (attempt {attempt + 1})")
+        except Exception as e:
+            log.warning(f"东方财富分时失败 [{code}] (attempt {attempt + 1}): {e}")
+            if attempt < retries:
+                await asyncio.sleep(0.5)
+    return None
+
+
+async def _fetch_em_kline(code: str, days: int = 120) -> Optional[dict]:
+    """从东方财富获取日K线数据"""
+    secid = _to_secid(code)
+    if not secid:
+        return None
+    params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": "1",
+        "end": "20500101",
+        "lmt": str(days),
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+    }
+    url = "http://push2his.eastmoney.com/api/qt/stock/kline/get"
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=EM_HEADERS) as client:
+                resp = await client.get(url, params=params)
+                raw = resp.json()
+                d = raw.get("data", {})
+                klines_raw = d.get("klines", [])
+                klines = []
+                for k in klines_raw:
+                    parts = k.split(",")
+                    if len(parts) >= 11:
+                        try:
+                            klines.append({
+                                "date": parts[0],
+                                "open": float(parts[1]),
+                                "close": float(parts[2]),
+                                "high": float(parts[3]),
+                                "low": float(parts[4]),
+                                "volume": float(parts[5]),
+                                "amount": float(parts[6]),
+                                "amplitude": float(parts[7]),
+                                "pct": float(parts[8]),
+                                "change": float(parts[9]),
+                                "turnover": float(parts[10]),
+                            })
+                        except (ValueError, IndexError):
+                            continue
+                if klines:
+                    return {
+                        "code": code,
+                        "name": d.get("name", ""),
+                        "klines": klines,
+                        "count": len(klines),
+                    }
+                log.warning(f"东方财富K线返回空 [{code}] (attempt {attempt + 1})")
+        except Exception as e:
+            log.warning(f"东方财富K线失败 [{code}] (attempt {attempt + 1}): {e}")
+            if attempt < 2:
+                await asyncio.sleep(0.5)
+    return None
+
+
 # ─── 新浪财经 API ─────────────────────────────────────
 def _parse_sina_response(data: str) -> Optional[Dict]:
     """解析新浪财经返回的股票行情数据"""
@@ -369,6 +504,54 @@ async def get_all():
     }
     _set_cache(cache_key, result)
     return JSONResponse(content=result)
+
+
+@app.get("/api/intraday")
+async def get_intraday(code: str = "sh000001"):
+    """获取指数分时数据（东方财富，15秒缓存）"""
+    cache_key = f"intraday_{code}"
+    INTRADAY_TTL = 15
+
+    entry = _cache.get(cache_key)
+    now = time.time()
+
+    if entry and now - entry[0] < INTRADAY_TTL:
+        return JSONResponse(content=entry[1])
+
+    data = await _fetch_em_intraday(code)
+    if data:
+        _cache[cache_key] = (now, data)
+        return JSONResponse(content=data)
+
+    # 获取失败但有旧数据，返回旧数据
+    if entry:
+        log.warning(f"分时数据刷新失败，使用{int(now - entry[0])}秒前缓存")
+        return JSONResponse(content=entry[1])
+
+    return JSONResponse(content={"code": code, "trends": [], "error": "获取分时数据失败"})
+
+
+@app.get("/api/kline")
+async def get_kline(code: str = "sh000001", days: int = 120):
+    """获取日K线数据（东方财富，5分钟缓存）"""
+    cache_key = f"kline_{code}_{days}"
+    now = time.time()
+    KLINE_TTL = 300
+
+    entry = _cache.get(cache_key)
+    if entry and now - entry[0] < KLINE_TTL:
+        return JSONResponse(content=entry[1])
+
+    data = await _fetch_em_kline(code, days)
+    if data:
+        _cache[cache_key] = (now, data)
+        return JSONResponse(content=data)
+
+    if entry:
+        log.warning(f"K线刷新失败，使用{int(now - entry[0])}秒前缓存")
+        return JSONResponse(content=entry[1])
+
+    return JSONResponse(content={"code": code, "klines": [], "error": "获取K线数据失败"})
 
 
 @app.get("/api/news")
