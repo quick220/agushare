@@ -20,22 +20,28 @@ from pydantic import BaseModel
 
 
 # ─── IPv4 辅助（armcube 上东方财富 API 的 IPv6 连接不稳定）───────
-_EM_HOST = "push2his.eastmoney.com"
-_EM_IPV4 = None  # lazy resolve
+_EM_HOSTS = {
+    "push2": "push2.eastmoney.com",      # 实时数据
+    "push2his": "push2his.eastmoney.com", # 历史数据
+}
+_EM_IP_CACHE: Dict[str, str] = {}
 
 
-def _resolve_em_ipv4() -> str:
+def _resolve_em_ipv4(host: str = "push2his") -> str:
     """解析东方财富域名到 IPv4 地址（缓存结果）"""
-    global _EM_IPV4
-    if _EM_IPV4 is None:
-        try:
-            addrs = socket.getaddrinfo(_EM_HOST, 80, socket.AF_INET)
-            _EM_IPV4 = addrs[0][4][0]
-            log.info(f"东方财富 API 已解析到 IPv4: {_EM_IPV4}")
-        except Exception as e:
-            log.warning(f"解析东方财富域名失败: {e}")
-            _EM_IPV4 = _EM_HOST  # fallback 到域名
-    return _EM_IPV4
+    domain = _EM_HOSTS.get(host, _EM_HOSTS["push2his"])
+    cached = _EM_IP_CACHE.get(domain)
+    if cached:
+        return cached
+    try:
+        addrs = socket.getaddrinfo(domain, 80, socket.AF_INET)
+        ip = addrs[0][4][0]
+        _EM_IP_CACHE[domain] = ip
+        log.info(f"东方财富 [{host}] 已解析到 IPv4: {ip}")
+        return ip
+    except Exception as e:
+        log.warning(f"解析东方财富 [{host}] 域名失败: {e}")
+        return domain  # fallback 到域名
 
 # ─── 日志 ────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -174,9 +180,9 @@ async def _fetch_em_intraday(code: str, retries: int = 2) -> Optional[dict]:
         "ndays": "1",
         "iscr": "0",
     }
-    ip = _resolve_em_ipv4()
+    ip = _resolve_em_ipv4("push2his")
     url = f"http://{ip}/api/qt/stock/trends2/get"
-    headers = {**EM_HEADERS, "Host": _EM_HOST}
+    headers = {**EM_HEADERS, "Host": _EM_HOSTS["push2his"]}
 
     for attempt in range(retries + 1):
         try:
@@ -232,9 +238,9 @@ async def _fetch_em_kline(code: str, days: int = 120) -> Optional[dict]:
         "lmt": str(days),
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
     }
-    ip = _resolve_em_ipv4()
+    ip = _resolve_em_ipv4("push2his")
     url = f"http://{ip}/api/qt/stock/kline/get"
-    headers = {**EM_HEADERS, "Host": _EM_HOST}
+    headers = {**EM_HEADERS, "Host": _EM_HOSTS["push2his"]}
 
     for attempt in range(3):
         try:
@@ -619,32 +625,45 @@ async def _get_stocks_data() -> dict:
 
 
 async def _get_market_overview_data() -> dict:
-    """从东方财富获取全市场涨跌家数"""
-    ip = _resolve_em_ipv4()
-    url = f"http://{ip}/api/qt/stock/get"
+    """获取全市场涨跌家数（多端点+指数退避，armcube 防断连）"""
     params = {
         "secid": "1.000001",
         "fields": "f169,f170,f171",
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
     }
-    headers = {**EM_HEADERS, "Host": _EM_HOST, "Connection": "close"}
-    for attempt in range(2):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), headers=headers) as client:
-                resp = await client.get(url, params=params)
-                raw = resp.json()
-                d = raw.get("data", {})
-                advance = d.get("f169", 0) or 0
-                decline = d.get("f170", 0) or 0
-                even = d.get("f171", 0) or 0
-                if advance > 0 or decline > 0:
-                    return {"advance": advance, "decline": decline, "even": even,
-                            "total": advance + decline + even}
-                log.warning(f"东方财富涨跌家数返回空 (attempt {attempt+1})")
-        except Exception as e:
-            log.warning(f"东方财富涨跌家数获取失败 (attempt {attempt+1}): {e}")
-        if attempt == 0:
-            await asyncio.sleep(1)
+
+    # 端点优先级：push2（实时主用）→ push2his（历史备用）
+    endpoints = [
+        ("push2", _EM_HOSTS["push2"]),
+        ("push2his", _EM_HOSTS["push2his"]),
+    ]
+
+    last_error = None
+    for name, domain in endpoints:
+        ip = _resolve_em_ipv4(name)
+        url = f"http://{ip}/api/qt/stock/get"
+        headers = {**EM_HEADERS, "Host": domain}
+
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(12.0), headers=headers) as client:
+                    resp = await client.get(url, params=params)
+                    raw = resp.json()
+                    d = raw.get("data", {})
+                    advance = d.get("f169", 0) or 0
+                    decline = d.get("f170", 0) or 0
+                    even = d.get("f171", 0) or 0
+                    if advance > 0 or decline > 0:
+                        return {"advance": advance, "decline": decline, "even": even,
+                                "total": advance + decline + even}
+                    log.warning(f"涨跌家数返回空 [{name}] (attempt {attempt+1})")
+            except Exception as e:
+                last_error = e
+                log.warning(f"涨跌家数获取失败 [{name}] (attempt {attempt+1}): {e}")
+            await asyncio.sleep(1 + attempt * 2)  # 指数退避: 1s, 3s, 5s
+
+    if last_error:
+        log.error(f"涨跌家数所有端点均失败，最终错误: {last_error}")
     return {"advance": 0, "decline": 0, "even": 0, "total": 0}
 
 

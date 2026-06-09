@@ -134,6 +134,21 @@ xset -dpms 2>/dev/null || true
 xset s noblank 2>/dev/null || true
 echo -e "${GREEN}   ✅ 屏幕休眠已禁用${NC}"
 
+# ─── 4b. 防休眠：每55秒微移鼠标1px ─────────────────────
+if command -v xdotool &>/dev/null; then
+    (
+        while true; do
+            sleep 55
+            xdotool mousemove_relative 1 1 2>/dev/null
+            xdotool mousemove_relative -- -1 -1 2>/dev/null
+        done
+    ) &
+    MOUSE_MOVE_PID=$!
+    echo -e "${GREEN}   ✅ 鼠标防休眠已启动 (PID: ${MOUSE_MOVE_PID})${NC}"
+else
+    echo -e "${YELLOW}   ⚠️  xdotool 未安装，跳过鼠标防休眠${NC}"
+fi
+
 # ─── 5. 启动 Kiosk 浏览器 ────────────────────────────
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════${NC}"
