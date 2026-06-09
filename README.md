@@ -42,7 +42,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/<你的用户名>/agushare.git
+git clone https://github.com/quick220/agushare.git
 cd agushare
 
 # 赋予执行权限
