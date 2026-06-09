@@ -733,6 +733,44 @@ async def get_intraday(code: str = "sh000001"):
     return JSONResponse(content={"code": code, "trends": [], "error": "获取分时数据失败"})
 
 
+@app.get("/api/intraday/batch")
+async def get_intraday_batch(codes: str = "sh000001"):
+    """批量获取指数分时数据（并行请求，15秒缓存）"""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not code_list:
+        return JSONResponse(content={})
+
+    cache_key = f"intraday_batch_{'_'.join(sorted(code_list))}"
+    INTRADAY_TTL = 15
+    entry = _cache.get(cache_key)
+    now = time.time()
+    if entry and now - entry[0] < INTRADAY_TTL:
+        return JSONResponse(content=entry[1])
+
+    async def _fetch_one(code: str) -> tuple:
+        data = await _fetch_tencent_intraday(code)
+        if data:
+            return (code, data)
+        data = await _fetch_em_intraday(code)
+        if data:
+            return (code, data)
+        data = await _fetch_sina_intraday(code)
+        if data:
+            return (code, data)
+        return (code, {"code": code, "error": "获取分时数据失败", "trends": []})
+
+    results = await asyncio.gather(*[_fetch_one(c) for c in code_list], return_exceptions=True)
+    result_dict = {}
+    for r in results:
+        if isinstance(r, tuple):
+            result_dict[r[0]] = r[1]
+        elif isinstance(r, Exception):
+            log.warning(f"分时批量请求异常: {r}")
+
+    _cache[cache_key] = (now, result_dict)
+    return JSONResponse(content=result_dict)
+
+
 @app.get("/api/kline")
 async def get_kline(code: str = "sh000001", days: int = 120):
     """获取日K线数据（东方财富，5分钟缓存）"""

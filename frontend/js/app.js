@@ -51,14 +51,23 @@ function updateIndices(data) {
         const colorClass = pct > 0 ? 'up-text' : (pct < 0 ? 'down-text' : 'even-text');
 
         card.className = 'index-card ' + direction;
-        card.innerHTML = '<div class="index-info">'
-            + '<div class="index-name">' + item.name + '</div>'
-            + '<div class="index-price ' + colorClass + '">' + (d.price || 0).toFixed(2) + '</div>'
-            + '</div>'
-            + '<div class="index-change">'
-            + '<div class="index-pct ' + colorClass + '">' + formatPct(pct) + '</div>'
-            + '<div class="index-amount">成交 ' + (d.amount ? d.amount.toFixed(1) + '亿' : '--') + '</div>'
-            + '</div>';
+
+        // 选择性更新DOM元素，不破坏sparkline容器
+        const nameEl = card.querySelector('.index-name');
+        const priceEl = card.querySelector('.index-price');
+        const pctEl = card.querySelector('.index-pct');
+        const amountEl = card.querySelector('.index-amount');
+
+        if (nameEl) nameEl.textContent = item.name;
+        if (priceEl) {
+            priceEl.textContent = (d.price || 0).toFixed(2);
+            priceEl.className = 'index-price ' + colorClass;
+        }
+        if (pctEl) {
+            pctEl.textContent = formatPct(pct);
+            pctEl.className = 'index-pct ' + colorClass;
+        }
+        if (amountEl) amountEl.textContent = '成交 ' + (d.amount ? d.amount.toFixed(1) + '亿' : '--');
     });
 
     // 市场状态
@@ -76,6 +85,72 @@ function updateIndices(data) {
             statusText.style.color = '#e74c3c';
         }
     }
+}
+
+// ─── 指数卡片微型分时图（sparkline）────────────────
+const sparklineCharts = [];
+
+function initSparklineCharts() {
+    for (let i = 1; i <= 6; i++) {
+        const dom = document.getElementById('sparkline-' + i);
+        if (dom) sparklineCharts[i - 1] = echarts.init(dom, 'dark', { renderer: 'canvas' });
+    }
+}
+
+function updateIndexSparklines(batchData) {
+    const indexCodes = ['sh000001', 'sz399001', 'sz399006', 'sh000688', 'bj899050', 'hf_GC'];
+
+    indexCodes.forEach((code, idx) => {
+        const chart = sparklineCharts[idx];
+        if (!chart) return;
+
+        const data = batchData[code];
+        if (!data || !data.trends || data.trends.length < 2) {
+            // 无数据时显示透明placeholder
+            chart.setOption({
+                grid: { left: 0, right: 0, top: 0, bottom: 0 },
+                xAxis: { show: false, data: [] },
+                yAxis: { show: false, min: 0, max: 1 },
+                series: [{ type: 'line', data: [], lineStyle: { width: 0 } }],
+                backgroundColor: 'transparent',
+            }, true);
+            return;
+        }
+
+        const trends = data.trends;
+        const prices = trends.map(t => t.price);
+        const prePrice = data.prePrice || prices[0];
+        const lastPrice = prices[prices.length - 1];
+        const isUp = lastPrice >= prePrice;
+        const lineColor = isUp ? '#e74c3c' : '#2ecc71';
+        const areaColor = isUp
+            ? ['rgba(231, 76, 60, 0.25)', 'rgba(231, 76, 60, 0.02)']
+            : ['rgba(46, 204, 113, 0.25)', 'rgba(46, 204, 113, 0.02)'];
+
+        const minP = Math.min(...prices);
+        const maxP = Math.max(...prices);
+        const pad = (maxP - minP) * 0.12 || prePrice * 0.002;
+
+        chart.setOption({
+            grid: { left: 0, right: 0, top: 2, bottom: 0 },
+            xAxis: { show: false, data: [] },
+            yAxis: { show: false, min: minP - pad, max: maxP + pad },
+            series: [{
+                type: 'line',
+                data: prices,
+                smooth: true,
+                showSymbol: false,
+                lineStyle: { width: 1.5, color: lineColor },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: areaColor[0] },
+                        { offset: 1, color: areaColor[1] },
+                    ]),
+                },
+            }],
+            backgroundColor: 'transparent',
+        }, true);
+    });
 }
 
 // ─── 更新自选股列表 ──────────────────────────────
@@ -504,6 +579,7 @@ function handleResize() {
     if (pieChart) pieChart.resize();
     if (timelineChart) timelineChart.resize();
     if (klineChart) klineChart.resize();
+    sparklineCharts.forEach(function (c) { if (c) c.resize(); });
 }
 
 window.addEventListener('resize', handleResize);
@@ -532,12 +608,19 @@ let intradayData = null;
 
 async function fetchIntraday() {
     try {
-        const resp = await fetch(API_BASE + '/intraday?code=sh000001');
+        const codes = 'sh000001,sz399001,sz399006,sh000688,bj899050,hf_GC';
+        const resp = await fetch(API_BASE + '/intraday/batch?codes=' + codes);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        intradayData = await resp.json();
+        const batchData = await resp.json();
 
-        if (intradayData && intradayData.trends && intradayData.trends.length > 0) {
-            updateTimelineChart(intradayData);
+        // 更新6个指数的sparkline
+        updateIndexSparklines(batchData);
+
+        // 上证分时更新大图
+        const shData = batchData['sh000001'];
+        if (shData && shData.trends && shData.trends.length > 0) {
+            intradayData = shData;
+            updateTimelineChart(shData);
         }
     } catch (err) {
         console.error('分时数据获取失败:', err);
@@ -564,6 +647,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initPieChart();
     initTimelineChart();
     initKlineChart();
+    initSparklineCharts();
 
     // 首次加载
     fetchAll();
