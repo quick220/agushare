@@ -347,7 +347,91 @@ body::before {
     letter-spacing: 1px;
 }
 
-/* ─── 管理按钮 ─── */
+/* ─── 滚动新闻条 ─── */
+.news-ticker {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    background: linear-gradient(90deg, var(--bg-secondary), #1a1f33);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    height: 34px;
+    overflow: hidden;
+}
+
+.news-ticker-label {
+    flex-shrink: 0;
+    padding: 0 14px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: var(--accent-blue);
+    background: rgba(0, 212, 255, 0.08);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    letter-spacing: 1px;
+    border-right: 1px solid var(--border-color);
+}
+
+.news-ticker-track {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    height: 100%;
+}
+
+.news-ticker-text {
+    display: inline-block;
+    white-space: nowrap;
+    padding-left: 100%;
+    font-size: 0.85em;
+    line-height: 34px;
+    color: var(--text-primary);
+    animation: ticker-scroll 40s linear infinite;
+}
+
+.news-ticker-text .news-item {
+    margin-right: 60px;
+}
+
+.news-item .ni-time {
+    color: var(--text-muted);
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    margin-right: 8px;
+}
+
+.news-item .ni-text {
+    color: var(--text-primary);
+}
+
+.news-item .ni-subject {
+    display: inline-block;
+    padding: 0 6px;
+    margin-left: 6px;
+    font-size: 0.8em;
+    border-radius: 3px;
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--accent-blue);
+}
+
+@keyframes ticker-scroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+}
+
+/* 新闻加载/错误状态 */
+.news-ticker-text.loading {
+    color: var(--text-muted);
+    animation: none;
+    padding-left: 16px;
+}
+
+.news-ticker-text.error {
+    color: var(--red-up);
+    animation: none;
+    padding-left: 16px;
+}
 .btn-manage {
     background: none;
     border: 1px solid var(--border-color);

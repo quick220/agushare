@@ -351,22 +351,37 @@ async def get_all():
     if cached:
         return JSONResponse(content=cached)
 
-    indices, stocks, overview = await asyncio.gather(
+    indices, stocks, overview, news = await asyncio.gather(
         _get_indices_data(),
         _get_stocks_data(),
         _get_market_overview_data(),
+        _fetch_cls_news(),
     )
 
     result = {
         "indices": indices,
         "stocks": stocks,
         "market_overview": overview,
+        "news": news,
         "watchlist_count": len(_watchlist),
         "update_time": time.strftime("%H:%M:%S"),
         "cache_seconds": CACHE_SECONDS,
     }
     _set_cache(cache_key, result)
     return JSONResponse(content=result)
+
+
+@app.get("/api/news")
+async def get_news():
+    """获取实时财经新闻（财联社电报）"""
+    cache_key = "news"
+    cached = _get_cached(cache_key)
+    if cached:
+        return JSONResponse(content=cached)
+
+    news_data = await _fetch_cls_news()
+    _set_cache(cache_key, news_data)
+    return JSONResponse(content=news_data)
 
 
 # ─── 内部辅助 ────────────────────────────────────────
@@ -418,3 +433,45 @@ async def _get_market_overview_data() -> dict:
             even += 1
     return {"advance": advance, "decline": decline, "even": even,
             "total": advance + decline + even}
+
+
+async def _fetch_cls_news() -> dict:
+    """获取财联社实时电报新闻"""
+    url = "https://www.cls.cn/api/cache?app=CailianpressWeb&name=telegraph&os=web&sv=8.7.9"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.cls.cn/telegraph",
+    }
+    timeout = httpx.Timeout(10.0)
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+        try:
+            resp = await client.get(url)
+            data = resp.json()
+            items = data.get("data", {}).get("roll_data", []) or data.get("data", [])
+            news_list = []
+            for item in items[:30]:
+                title = item.get("title", "") or ""
+                brief = item.get("brief", "") or ""
+                content = item.get("content", "") or ""
+                ctime = item.get("ctime", 0)
+                subjects = item.get("subjects", [])
+
+                # 取最佳文本
+                text = title or brief or content
+                if not text:
+                    continue
+
+                # 格式化时间
+                from datetime import datetime
+                time_str = datetime.fromtimestamp(ctime).strftime("%H:%M") if ctime else ""
+
+                news_list.append({
+                    "text": text.strip(),
+                    "time": time_str,
+                    "subjects": subjects if isinstance(subjects, list) else [],
+                })
+
+            return {"items": news_list, "count": len(news_list)}
+        except Exception as e:
+            log.error(f"获取财联社新闻失败: {e}")
+            return {"items": [], "count": 0, "error": str(e)}

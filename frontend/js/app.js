@@ -314,12 +314,83 @@ async function fetchAll() {
             updateTimelineChart(data.indices);
         }
 
+        // 新闻
+        updateNews(data.news || {});
+
         // 更新时间
         const timeEl = document.getElementById('update-time');
         if (timeEl) timeEl.textContent = data.update_time || '--:--:--';
 
     } catch (err) {
         console.error('数据获取失败:', err);
+    }
+}
+
+// ─── 更新滚动新闻 ─────────────────────────────────
+let newsItems = [];
+let newsInterval = null;
+
+function updateNews(data) {
+    const el = document.getElementById('news-text');
+    if (!el) return;
+
+    if (!data || !data.items || data.items.length === 0) {
+        el.textContent = '⚠️ 财经快讯加载失败';
+        el.className = 'news-ticker-text error';
+        return;
+    }
+
+    newsItems = data.items;
+    el.className = 'news-ticker-text';
+    renderNewsTicker();
+
+    // 每30秒刷新新闻列表
+    if (newsInterval) clearInterval(newsInterval);
+    newsInterval = setInterval(fetchNewsOnly, 30000);
+}
+
+function renderNewsTicker() {
+    const el = document.getElementById('news-text');
+    if (!el || newsItems.length === 0) return;
+
+    // 构建滚动内容：每条新闻拼接，加倍以便无缝滚动
+    let html = '';
+    const doubled = [...newsItems, ...newsItems];
+    doubled.forEach(item => {
+        const subjects = (item.subjects || []).slice(0, 2);
+        const tags = subjects.map(s => `<span class="ni-subject">${s}</span>`).join('');
+        html += `<span class="news-item">
+            <span class="ni-time">${item.time || ''}</span>
+            <span class="ni-text">${escapeHtml(item.text)}</span>
+            ${tags}
+        </span>`;
+    });
+
+    el.innerHTML = html;
+
+    // 重置动画
+    el.style.animation = 'none';
+    void el.offsetHeight; // 触发回流
+    el.style.animation = 'ticker-scroll 45s linear infinite';
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+async function fetchNewsOnly() {
+    try {
+        const resp = await fetch(`${API_BASE}/news`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data && data.items && data.items.length > 0) {
+            newsItems = data.items;
+            renderNewsTicker();
+        }
+    } catch (err) {
+        console.error('新闻刷新失败:', err);
     }
 }
 
