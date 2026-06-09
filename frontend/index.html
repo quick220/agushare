@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股大屏 - 实时行情看板</title>
+<!-- ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="dashboard">
+
+    <!-- 标题栏 -->
+    <div class="header">
+        <div class="header-title">
+            <h1>📈 A股大屏</h1>
+            <span class="subtitle">REAL-TIME MARKET</span>
+        </div>
+        <div class="market-status">
+            <span id="market-status-dot" class="status-dot closed"></span>
+            <span id="market-status-text" style="font-size:0.9em;letter-spacing:1px;">加载中...</span>
+            <span style="margin-left:16px;color:#4a5580;">|</span>
+            <span class="update-time">更新 <span id="update-time">--:--:--</span></span>
+        </div>
+    </div>
+
+    <!-- 三大指数 -->
+    <div class="indices-row">
+        <div class="index-card" id="index-1">
+            <div class="index-info">
+                <div class="index-name">上证指数</div>
+                <div class="index-price even-text">--</div>
+            </div>
+            <div class="index-change">
+                <div class="index-pct even-text">--</div>
+                <div class="index-amount">加载中...</div>
+            </div>
+        </div>
+        <div class="index-card" id="index-2">
+            <div class="index-info">
+                <div class="index-name">深证成指</div>
+                <div class="index-price even-text">--</div>
+            </div>
+            <div class="index-change">
+                <div class="index-pct even-text">--</div>
+                <div class="index-amount">加载中...</div>
+            </div>
+        </div>
+        <div class="index-card" id="index-3">
+            <div class="index-info">
+                <div class="index-name">创业板指</div>
+                <div class="index-price even-text">--</div>
+            </div>
+            <div class="index-change">
+                <div class="index-pct even-text">--</div>
+                <div class="index-amount">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主体 -->
+    <div class="main-content">
+        <!-- 左侧：自选股列表 -->
+        <div class="panel">
+            <div class="panel-title">
+                自选股行情
+                <span class="stock-count" id="stock-count">--</span>
+            </div>
+            <div class="stock-table">
+                <div class="table-header">
+                    <span>名称</span>
+                    <span style="text-align:right;">现价</span>
+                    <span style="text-align:right;">涨跌幅</span>
+                    <span style="text-align:right;">换手率</span>
+                </div>
+                <div class="table-body" id="stock-list"></div>
+            </div>
+        </div>
+
+        <!-- 右侧：图表 -->
+        <div class="panel">
+            <div class="panel-title">市场分析</div>
+            <div class="chart-container">
+                <div class="chart-box" id="timeline-chart"></div>
+                <div class="chart-box" id="pie-chart"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+        A股大屏 · 数据来源：新浪财经 · 每 5 秒自动刷新 · 仅供个人参考
+    </div>
+
+</div>
+<script src="js/app.js"></script>
+</body>
+</html>
