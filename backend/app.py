@@ -61,14 +61,14 @@ app.add_middleware(
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "5"))
 STOCKS_FILE = os.environ.get("STOCKS_FILE", "/data/stocks.json")
 
-# ─── 指数代码（前三大指数 + 科创/北交/黄金）───────────
+# ─── 指数代码（前三大指数 + 科创/北交/纽约金）───────────
 INDEX_CODES = {
     "sh000001": "上证指数",
     "sz399001": "深证成指",
     "sz399006": "创业板指",
     "sh000688": "科创50",
     "bj899050": "北证50",
-    "sh518880": "黄金ETF",
+    "hf_GC": "纽约金主连",
 }
 
 # ─── 默认自选股（首次启动时写入） ──────────────────────
@@ -223,6 +223,106 @@ async def _fetch_em_intraday(code: str, retries: int = 2) -> Optional[dict]:
     return None
 
 
+async def _fetch_tencent_intraday(code: str) -> Optional[dict]:
+    """从腾讯财经获取指数分时数据"""
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://gu.qq.com/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers, follow_redirects=True) as client:
+            resp = await client.get(url)
+            raw = resp.json()
+
+        data = raw.get("data", {})
+        code_data = data.get(code, {})
+        inner = code_data.get("data", {})
+        tdata = inner.get("tdata", [])
+
+        prePrice = code_data.get("prePrice", 0) or inner.get("prePrice", 0) or 0
+        if not prePrice:
+            qt = code_data.get("qt", {}) or {}
+            prePrice = qt.get("preClose", 0) or 0
+
+        trends = []
+        for t in tdata:
+            if len(t) >= 3:
+                trends.append({
+                    "time": t[0],
+                    "price": float(t[1]) if t[1] else 0,
+                    "volume": float(t[2]) if t[2] else 0,
+                })
+
+        if trends:
+            if prePrice == 0:
+                prePrice = trends[0]["price"]
+            return {
+                "code": code,
+                "name": code_data.get("name", ""),
+                "prePrice": prePrice,
+                "trends": trends,
+                "count": len(trends),
+            }
+        log.warning(f"腾讯财经分时返回空 [{code}]")
+    except Exception as e:
+        log.warning(f"腾讯财经分时失败 [{code}]: {e}")
+    return None
+
+
+async def _fetch_sina_intraday(code: str) -> Optional[dict]:
+    """从新浪财经获取指数分时数据（5分钟K线，备选）"""
+    # 转换代码：sh000001 → sh000001, sz399001 → sz399001
+    symbol = code
+    url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+    params = {"symbol": symbol, "datalen": "96", "scale": "5"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://finance.sina.com.cn",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
+            resp = await client.get(url, params=params)
+            raw = resp.json()
+
+        if not raw or not isinstance(raw, list) or len(raw) < 2:
+            log.warning(f"新浪分时返回空 [{code}]")
+            return None
+
+        trends = []
+        for item in raw:
+            day_str = item.get("day", "")
+            close = float(item.get("close", 0))
+            volume = float(item.get("volume", 0))
+            if close > 0:
+                trends.append({
+                    "time": day_str,
+                    "price": close,
+                    "high": float(item.get("high", 0)),
+                    "low": float(item.get("low", 0)),
+                    "volume": volume,
+                })
+
+        if not trends:
+            return None
+
+        # 估算昨收价 = 第一根K线的开盘价
+        first_open = float(raw[0].get("open", 0))
+        prePrice = first_open if first_open > 0 else trends[0]["price"]
+
+        log.info(f"新浪分时数据: {code} ({len(trends)}个点) prePrice={prePrice}")
+        return {
+            "code": code,
+            "name": "",
+            "prePrice": prePrice,
+            "trends": trends,
+            "count": len(trends),
+        }
+    except Exception as e:
+        log.warning(f"新浪分时失败 [{code}]: {e}")
+    return None
+
+
 async def _fetch_em_kline(code: str, days: int = 120) -> Optional[dict]:
     """从东方财富获取日K线数据"""
     secid = _to_secid(code)
@@ -354,6 +454,66 @@ async def _fetch_sina(codes: list) -> Dict[str, dict]:
     return result
 
 
+def _parse_sina_futures_response(data: str) -> Optional[Dict]:
+    """解析新浪财经国际期货行情数据
+    格式: price,,prev_close,open,high,low,time,bid,ask,...,date,name,...
+    """
+    m = re.search(r'hq_str_[^=]+="([^"]*)"', data)
+    if not m:
+        return None
+    fields = m.group(1).split(",")
+    if len(fields) < 14:
+        return None
+    price = float(fields[0]) if fields[0] else 0  # 当前价 (字段0)
+    prev_close = float(fields[2]) if fields[2] else 0  # 昨收 (字段2)
+    change_amount = round(price - prev_close, 2) if prev_close > 0 else 0
+    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0
+    return {
+        "name": fields[13] if fields[13] else "期货",
+        "open": float(fields[3]) if fields[3] else 0,
+        "prev_close": prev_close,
+        "price": price,
+        "high": float(fields[4]) if fields[4] else 0,
+        "low": float(fields[5]) if fields[5] else 0,
+        "volume": 0,
+        "amount": 0,
+        "turnover": "0.00%",
+        "change_pct": change_pct,
+        "change_amount": change_amount,
+    }
+
+
+async def _fetch_sina_futures(codes: list) -> Dict[str, dict]:
+    """批量获取新浪国际期货行情"""
+    if not codes:
+        return {}
+    url = f"https://hq.sinajs.cn/list={','.join(codes)}"
+    headers = {
+        "Referer": "https://finance.sina.com.cn",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
+        try:
+            resp = await client.get(url)
+            resp.encoding = "gbk"
+            raw = resp.text
+        except Exception as e:
+            log.error(f"请求新浪期货API失败: {e}")
+            return {}
+    result = {}
+    lines = raw.strip().split("\n")
+    for line in lines:
+        if not line.strip():
+            continue
+        parsed = _parse_sina_futures_response(line)
+        if parsed is None:
+            continue
+        m = re.search(r'hq_str_([^=]+)="', line)
+        code = m.group(1) if m else "unknown"
+        result[code] = parsed
+    return result
+
+
 # ═══════════════════════════════════════════════════════
 # API 端点
 # ═══════════════════════════════════════════════════════
@@ -434,14 +594,21 @@ async def remove_stock(code: str):
 
 @app.get("/api/indices")
 async def get_indices():
-    """获取三大指数实时行情"""
+    """获取指数实时行情（A股+国际期货）"""
     cache_key = "indices"
     cached = _get_cached(cache_key)
     if cached:
         return JSONResponse(content=cached)
 
     codes = list(INDEX_CODES.keys())
-    data = await _fetch_sina(codes)
+    a_share = [c for c in codes if c[:2] in ('sh', 'sz', 'bj')]
+    futures = [c for c in codes if c.startswith('hf_')]
+
+    data = {}
+    if a_share:
+        data.update(await _fetch_sina(a_share))
+    if futures:
+        data.update(await _fetch_sina_futures(futures))
 
     result = {}
     for code, name in INDEX_CODES.items():
@@ -529,7 +696,7 @@ async def get_all():
 
 @app.get("/api/intraday")
 async def get_intraday(code: str = "sh000001"):
-    """获取指数分时数据（东方财富，15秒缓存）"""
+    """获取指数分时数据（腾讯财经主用，东方财富备用，15秒缓存）"""
     cache_key = f"intraday_{code}"
     INTRADAY_TTL = 15
 
@@ -539,7 +706,20 @@ async def get_intraday(code: str = "sh000001"):
     if entry and now - entry[0] < INTRADAY_TTL:
         return JSONResponse(content=entry[1])
 
+    # 主用：腾讯财经（armcube可达）
+    data = await _fetch_tencent_intraday(code)
+    if data:
+        _cache[cache_key] = (now, data)
+        return JSONResponse(content=data)
+
+    # 备用：东方财富
     data = await _fetch_em_intraday(code)
+    if data:
+        _cache[cache_key] = (now, data)
+        return JSONResponse(content=data)
+
+    # 三选：新浪5分钟K线
+    data = await _fetch_sina_intraday(code)
     if data:
         _cache[cache_key] = (now, data)
         return JSONResponse(content=data)
@@ -593,7 +773,15 @@ async def get_news():
 
 async def _get_indices_data() -> dict:
     codes = list(INDEX_CODES.keys())
-    data = await _fetch_sina(codes)
+    a_share = [c for c in codes if c[:2] in ('sh', 'sz', 'bj')]
+    futures = [c for c in codes if c.startswith('hf_')]
+
+    data = {}
+    if a_share:
+        data.update(await _fetch_sina(a_share))
+    if futures:
+        data.update(await _fetch_sina_futures(futures))
+
     result = {}
     for code, name in INDEX_CODES.items():
         if code in data:

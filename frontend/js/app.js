@@ -37,7 +37,7 @@ function updateIndices(data) {
         { code: 'sz399006', name: '创业板指' },
         { code: 'sh000688', name: '科创50' },
         { code: 'bj899050', name: '北证50' },
-        { code: 'sh518880', name: '黄金ETF' },
+        { code: 'hf_GC', name: '纽约金主连' },
     ];
 
     indices.forEach((item, idx) => {
@@ -94,7 +94,6 @@ function updateStocks(data) {
             + '<div class="stock-name">' + (d.name || code) + '</div>'
             + '<div class="stock-price" style="color:' + getColor(pct) + '">' + price.toFixed(2) + '</div>'
             + '<div class="stock-pct ' + (pct > 0 ? 'bg-up' : (pct < 0 ? 'bg-down' : '')) + '">' + formatPct(pct) + '</div>'
-            + '<div class="stock-turnover">' + (d.turnover || '--') + '</div>'
             + '</div>';
         count++;
     }
@@ -128,16 +127,16 @@ function updatePieChart(data) {
         },
         legend: {
             orient: 'horizontal',
-            bottom: 0,
+            bottom: 2,
             textStyle: { color: '#8892b0', fontSize: 10 },
             itemWidth: 10,
             itemHeight: 10,
         },
         series: [{
             type: 'pie',
-            radius: ['40%', '65%'],
-            center: ['50%', '45%'],
-            avoidLabelOverlap: false,
+            radius: ['28%', '50%'],
+            center: ['50%', '44%'],
+            avoidLabelOverlap: true,
             label: {
                 show: true,
                 formatter: '{c}',
@@ -146,7 +145,7 @@ function updatePieChart(data) {
                 fontWeight: 'bold',
             },
             emphasis: {
-                label: { show: true, fontSize: 16, fontWeight: 'bold' },
+                label: { show: true, fontSize: 14, fontWeight: 'bold' },
                 itemStyle: { shadowBlur: 8, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' },
             },
             labelLine: { show: false },

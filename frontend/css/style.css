@@ -351,9 +351,9 @@ body::before {
 
 .stock-table .table-header {
     display: grid;
-    grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
-    padding: 8px 10px;
-    font-size: 0.95em;
+    grid-template-columns: 1.5fr 1.4fr 1.1fr;
+    padding: 6px 8px;
+    font-size: 0.78em;
     color: var(--text-muted);
     letter-spacing: 1px;
     border-bottom: 1px solid var(--border-color);
@@ -376,22 +376,11 @@ body::before {
     border-radius: 2px;
 }
 
-.stock-table .table-header {
-    display: grid;
-    grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
-    padding: 8px 10px;
-    font-size: 0.95em;
-    border-bottom: 1px solid rgba(42, 48, 80, 0.3);
-    transition: background 0.15s;
-    align-items: center;
-    flex-shrink: 0;
-}
-
 .stock-row {
     display: grid;
-    grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
-    padding: 7px 10px;
-    font-size: 1.05em;
+    grid-template-columns: 1.5fr 1.4fr 1.1fr;
+    padding: 4px 8px;
+    font-size: 0.78em;
     transition: background 0.15s;
     align-items: center;
 }
@@ -423,13 +412,6 @@ body::before {
     font-size: 0.95em;
     display: inline-block;
     justify-self: end;
-}
-
-.stock-turnover {
-    font-family: 'Courier New', monospace;
-    text-align: right;
-    color: var(--text-secondary);
-    font-size: 0.85em;
 }
 
 .stock-pct.bg-up {
@@ -477,6 +459,7 @@ body::before {
 .chart-box {
     flex: 1;
     min-height: 0;
+    overflow: visible;
 }
 
 /* ─── K线图特殊样式 ─── */
@@ -494,7 +477,7 @@ body::before {
 
 /* ─── 饼图比例 ─── */
 .chart-section-pie {
-    flex: 1.2;
+    flex: 1.8;
 }
 
 /* ─── 页脚 ─── */
