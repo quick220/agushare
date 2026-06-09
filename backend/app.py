@@ -1,26 +1,28 @@
 """
 A股大屏 - 后端数据代理服务
-从新浪财经免费API获取A股实时行情，提供缓存和CORS支持
+从新浪财经免费API获取A股实时行情，提供缓存、CORS、自选股管理
 """
 
 import os
+import json
 import time
 import re
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 # ─── 日志 ────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("agushare")
 
 # ─── 应用 ────────────────────────────────────────────
-app = FastAPI(title="A股大屏 Backend", version="1.0.0")
+app = FastAPI(title="A股大屏 Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,37 +33,79 @@ app.add_middleware(
 
 # ─── 配置 ────────────────────────────────────────────
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "5"))
+STOCKS_FILE = os.environ.get("STOCKS_FILE", "/data/stocks.json")
 
-# ─── 自选股列表 ──────────────────────────────────────
-# 格式：代码 -> 名称
-# sh=上海, sz=深圳, 代码为6位数字
-STOCK_LIST: Dict[str, str] = {
-    # 权重蓝筹
+# ─── 三大指数代码 ────────────────────────────────────
+INDEX_CODES = {
+    "sh000001": "上证指数",
+    "sz399001": "深证成指",
+    "sz399006": "创业板指",
+}
+
+# ─── 默认自选股（首次启动时写入） ──────────────────────
+DEFAULT_STOCKS = {
     "sh600519": "贵州茅台",
     "sh601318": "中国平安",
     "sh600036": "招商银行",
     "sh600900": "长江电力",
-    "sh601166": "兴业银行",
-    "sh600887": "伊利股份",
-    "sh601398": "工商银行",
-    "sh600276": "恒瑞医药",
-    # 深圳权重
     "sz000333": "美的集团",
     "sz002415": "海康威视",
-    "sz000858": "五粮液",
     "sz002594": "比亚迪",
     "sz300750": "宁德时代",
+    "sz000858": "五粮液",
     "sz002475": "立讯精密",
-    "sz002714": "牧原股份",
     "sz000001": "平安银行",
+    "sz002714": "牧原股份",
 }
+
+# ─── 持久化自选股管理 ────────────────────────────────
+_watchlist: Dict[str, str] = {}  # code -> name
+
+
+def _load_watchlist():
+    """从文件加载自选股列表"""
+    global _watchlist
+    try:
+        if os.path.exists(STOCKS_FILE):
+            with open(STOCKS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and len(data) > 0:
+                    _watchlist = data
+                    log.info(f"已加载 {len(_watchlist)} 只自选股")
+                    return
+        log.info("无自选股文件，使用默认列表")
+    except Exception as e:
+        log.warning(f"加载自选股文件失败: {e}")
+
+    _watchlist = dict(DEFAULT_STOCKS)
+    _save_watchlist()
+
+
+def _save_watchlist():
+    """保存自选股列表到文件"""
+    try:
+        os.makedirs(os.path.dirname(STOCKS_FILE) or ".", exist_ok=True)
+        with open(STOCKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_watchlist, f, ensure_ascii=False, indent=2)
+        log.info(f"已保存 {len(_watchlist)} 只自选股")
+    except Exception as e:
+        log.error(f"保存自选股失败: {e}")
+
+
+# 启动时加载
+_load_watchlist()
+
+
+def _validate_stock_code(code: str) -> bool:
+    """验证股票代码格式：sh/sz + 6位数字"""
+    return bool(re.match(r"^(sh|sz)\d{6}$", code))
+
 
 # ─── 缓存 ────────────────────────────────────────────
 _cache: Dict[str, tuple] = {}  # key -> (timestamp, data)
 
 
 def _get_cached(key: str):
-    """获取缓存，过期返回 None"""
     entry = _cache.get(key)
     if entry and time.time() - entry[0] < CACHE_SECONDS:
         return entry[1]
@@ -73,23 +117,8 @@ def _set_cache(key: str, data):
 
 
 # ─── 新浪财经 API ─────────────────────────────────────
-
-# 三大指数代码
-INDEX_CODES = {
-    "sh000001": "上证指数",
-    "sz399001": "深证成指",
-    "sz399006": "创业板指",
-}
-
-# 涨跌家数（深证）
-AD_DECLINE_CODE = "sz399107"
-
-
 def _parse_sina_response(data: str) -> Optional[Dict]:
-    """
-    解析新浪财经返回的股票行情数据
-    格式: var hq_str_sh600519="贵州茅台,1842.00,1840.50,...";
-    """
+    """解析新浪财经返回的股票行情数据"""
     m = re.search(r'hq_str_[^=]+="([^"]*)"', data)
     if not m:
         return None
@@ -106,13 +135,12 @@ def _parse_sina_response(data: str) -> Optional[Dict]:
         "volume": int(fields[8]) if fields[8] else 0,  # 成交量（手）
         "amount": float(fields[9]) if fields[9] else 0,  # 成交额（万元）
         "turnover": fields[10] if len(fields) > 10 else "0.00%",  # 换手率
-        "change_pct": 0,  # 将在下面计算
+        "change_pct": 0,
         "change_amount": 0,
     }
 
 
 def _compute_change(data: dict) -> dict:
-    """计算涨跌幅和涨跌额"""
     prev = data.get("prev_close", 1)
     price = data.get("price", 0)
     if prev and prev > 0:
@@ -124,7 +152,7 @@ def _compute_change(data: dict) -> dict:
     return data
 
 
-async def _fetch_sina(codes: List[str]) -> Dict[str, dict]:
+async def _fetch_sina(codes: list) -> Dict[str, dict]:
     """批量获取新浪行情"""
     if not codes:
         return {}
@@ -144,7 +172,6 @@ async def _fetch_sina(codes: List[str]) -> Dict[str, dict]:
             return {}
 
     result = {}
-    # 按行分割解析每只股票
     lines = raw.strip().split("\n")
     for line in lines:
         if not line.strip():
@@ -153,19 +180,88 @@ async def _fetch_sina(codes: List[str]) -> Dict[str, dict]:
         if parsed is None:
             continue
         parsed = _compute_change(parsed)
-        # 从行中找到对应的代码
         m = re.search(r'hq_str_([^=]+)="', line)
         code = m.group(1) if m else "unknown"
         result[code] = parsed
     return result
 
 
-# ─── API 端点 ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════
+# API 端点
+# ═══════════════════════════════════════════════════════
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "cache_seconds": CACHE_SECONDS}
+    return {"status": "ok", "cache_seconds": CACHE_SECONDS, "watchlist_count": len(_watchlist)}
+
+
+# ─── 自选股管理 ──────────────────────────────────────
+
+
+@app.get("/api/watchlist")
+async def get_watchlist():
+    """获取自选股列表"""
+    return JSONResponse(content={
+        "stocks": [{"code": k, "name": v} for k, v in _watchlist.items()],
+        "count": len(_watchlist),
+    })
+
+
+class AddStockRequest(BaseModel):
+    code: str
+    name: str
+
+
+@app.post("/api/watchlist/add")
+async def add_stock(req: AddStockRequest):
+    """添加自选股"""
+    code = req.code.strip()
+    name = req.name.strip()
+
+    if not _validate_stock_code(code):
+        raise HTTPException(status_code=400, detail=f"无效的股票代码格式: {code}，应为 shXXXXXX 或 szXXXXXX")
+
+    if not name:
+        raise HTTPException(status_code=400, detail="股票名称不能为空")
+
+    if code in _watchlist:
+        raise HTTPException(status_code=409, detail=f"股票 {code} ({_watchlist[code]}) 已在自选股中")
+
+    # 验证该代码是否有行情数据
+    data = await _fetch_sina([code])
+    if code not in data or data[code].get("price", 0) == 0:
+        # 允许添加，但给出警告
+        log.warning(f"股票 {code} ({name}) 可能无行情数据")
+
+    _watchlist[code] = name
+    _save_watchlist()
+    # 清除股票相关缓存
+    for k in list(_cache.keys()):
+        if k in ("stocks", "all", "market_overview"):
+            del _cache[k]
+
+    return {"success": True, "code": code, "name": name, "count": len(_watchlist)}
+
+
+@app.delete("/api/watchlist/{code:path}")
+async def remove_stock(code: str):
+    """删除自选股"""
+    code = code.strip()
+    if code not in _watchlist:
+        raise HTTPException(status_code=404, detail=f"股票 {code} 不在自选股中")
+
+    name = _watchlist.pop(code)
+    _save_watchlist()
+    # 清除缓存
+    for k in list(_cache.keys()):
+        if k in ("stocks", "all", "market_overview"):
+            del _cache[k]
+
+    return {"success": True, "removed": code, "name": name, "count": len(_watchlist)}
+
+
+# ─── 行情数据 ────────────────────────────────────────
 
 
 @app.get("/api/indices")
@@ -184,14 +280,11 @@ async def get_indices():
         if code in data:
             d = data[code]
             d["name"] = name
-            # 指数成交额单位是亿元
-            if "amount" in d:
-                d["amount"] = round(d["amount"] / 10000, 2)
+            d["amount"] = round(d.get("amount", 0) / 10000, 2)
             result[code] = d
         else:
             result[code] = {"name": name, "price": 0, "change_pct": 0, "change_amount": 0, "amount": 0}
 
-    # 成交量已为0 -> 休市
     is_open = any(d.get("volume", 0) > 0 for d in data.values()) if data else False
     result["_market_status"] = "open" if is_open else "closed"
 
@@ -207,20 +300,19 @@ async def get_stocks():
     if cached:
         return JSONResponse(content=cached)
 
-    codes = list(STOCK_LIST.keys())
+    codes = list(_watchlist.keys())
     data = await _fetch_sina(codes)
 
     result = {}
-    for code, name in STOCK_LIST.items():
+    for code, name in _watchlist.items():
         if code in data:
             d = data[code]
             d["name"] = name
-            # 成交额: 万元 -> 亿元
-            if "amount" in d:
-                d["amount"] = round(d["amount"] / 10000, 2)
+            d["amount"] = round(d.get("amount", 0) / 10000, 2)
             result[code] = d
         else:
-            result[code] = {"name": name, "price": 0, "change_pct": 0, "change_amount": 0, "volume": 0, "amount": 0, "turnover": "0.00%"}
+            result[code] = {"name": name, "price": 0, "change_pct": 0,
+                            "change_amount": 0, "volume": 0, "amount": 0, "turnover": "0.00%"}
 
     _set_cache(cache_key, result)
     return JSONResponse(content=result)
@@ -228,28 +320,15 @@ async def get_stocks():
 
 @app.get("/api/market-overview")
 async def get_market_overview():
-    """
-    获取市场涨跌家数概览
-    使用深证涨跌家数指标
-    """
+    """获取市场涨跌家数概览"""
     cache_key = "market_overview"
     cached = _get_cached(cache_key)
     if cached:
         return JSONResponse(content=cached)
 
-    data = await _fetch_sina([AD_DECLINE_CODE])
-
-    result = {"advance": 0, "decline": 0, "even": 0}
-    if AD_DECLINE_CODE in data:
-        d = data[AD_DECLINE_CODE]
-        # 涨跌家数在某些字段中
-        # 字段格式可能不同，尝试从原始数据中提取
-        pass
-
-    # 备用方案：从自选股中统计涨跌
-    stocks_data = await _fetch_sina(list(STOCK_LIST.keys()))
+    stocks_data = await _fetch_sina(list(_watchlist.keys()))
     advance = decline = even = 0
-    for code, d in stocks_data.items():
+    for d in stocks_data.values():
         pct = d.get("change_pct", 0)
         if pct > 0:
             advance += 1
@@ -258,7 +337,8 @@ async def get_market_overview():
         else:
             even += 1
 
-    result = {"advance": advance, "decline": decline, "even": even, "total": advance + decline + even}
+    result = {"advance": advance, "decline": decline, "even": even,
+              "total": advance + decline + even}
     _set_cache(cache_key, result)
     return JSONResponse(content=result)
 
@@ -281,6 +361,7 @@ async def get_all():
         "indices": indices,
         "stocks": stocks,
         "market_overview": overview,
+        "watchlist_count": len(_watchlist),
         "update_time": time.strftime("%H:%M:%S"),
         "cache_seconds": CACHE_SECONDS,
     }
@@ -288,7 +369,7 @@ async def get_all():
     return JSONResponse(content=result)
 
 
-# ─── 内部辅助方法 ────────────────────────────────────
+# ─── 内部辅助 ────────────────────────────────────────
 
 
 async def _get_indices_data() -> dict:
@@ -299,8 +380,7 @@ async def _get_indices_data() -> dict:
         if code in data:
             d = data[code]
             d["name"] = name
-            if "amount" in d:
-                d["amount"] = round(d["amount"] / 10000, 2)
+            d["amount"] = round(d.get("amount", 0) / 10000, 2)
             result[code] = d
         else:
             result[code] = {"name": name, "price": 0, "change_pct": 0, "change_amount": 0, "amount": 0}
@@ -310,23 +390,23 @@ async def _get_indices_data() -> dict:
 
 
 async def _get_stocks_data() -> dict:
-    codes = list(STOCK_LIST.keys())
+    codes = list(_watchlist.keys())
     data = await _fetch_sina(codes)
     result = {}
-    for code, name in STOCK_LIST.items():
+    for code, name in _watchlist.items():
         if code in data:
             d = data[code]
             d["name"] = name
-            if "amount" in d:
-                d["amount"] = round(d["amount"] / 10000, 2)
+            d["amount"] = round(d.get("amount", 0) / 10000, 2)
             result[code] = d
         else:
-            result[code] = {"name": name, "price": 0, "change_pct": 0, "change_amount": 0, "volume": 0, "amount": 0, "turnover": "0.00%"}
+            result[code] = {"name": name, "price": 0, "change_pct": 0,
+                            "change_amount": 0, "volume": 0, "amount": 0, "turnover": "0.00%"}
     return result
 
 
 async def _get_market_overview_data() -> dict:
-    stocks_data = await _fetch_sina(list(STOCK_LIST.keys()))
+    stocks_data = await _fetch_sina(list(_watchlist.keys()))
     advance = decline = even = 0
     for d in stocks_data.values():
         pct = d.get("change_pct", 0)
@@ -336,4 +416,5 @@ async def _get_market_overview_data() -> dict:
             decline += 1
         else:
             even += 1
-    return {"advance": advance, "decline": decline, "even": even, "total": advance + decline + even}
+    return {"advance": advance, "decline": decline, "even": even,
+            "total": advance + decline + even}

@@ -22,6 +22,7 @@
             <span id="market-status-text" style="font-size:0.9em;letter-spacing:1px;">加载中...</span>
             <span style="margin-left:16px;color:#4a5580;">|</span>
             <span class="update-time">更新 <span id="update-time">--:--:--</span></span>
+            <button class="btn-manage" onclick="openManageModal()" title="管理自选股">⚙️</button>
         </div>
     </div>
 
@@ -94,6 +95,54 @@
     </div>
 
 </div>
+
+<!-- ─── 自选股管理弹窗 ─── -->
+<div id="manage-modal" class="modal-overlay" onclick="closeManageModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h2>📋 管理自选股</h2>
+            <button class="modal-close" onclick="closeManageModal()">&times;</button>
+        </div>
+
+        <!-- 添加新股票 -->
+        <div class="modal-section">
+            <h3>添加股票</h3>
+            <div class="add-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>交易所</label>
+                        <select id="add-exchange">
+                            <option value="sh">上海 (sh)</option>
+                            <option value="sz">深圳 (sz)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>股票代码（6位）</label>
+                        <input type="text" id="add-code" placeholder="例如 600519" maxlength="6">
+                    </div>
+                    <div class="form-group">
+                        <label>股票名称</label>
+                        <input type="text" id="add-name" placeholder="例如 贵州茅台">
+                    </div>
+                    <button class="btn-add" onclick="addStock()">➕ 添加</button>
+                </div>
+                <p class="form-hint">提示：代码不含 sh/sz 前缀，系统自动补全</p>
+            </div>
+        </div>
+
+        <!-- 已有自选股列表 -->
+        <div class="modal-section">
+            <h3>已添加 (<span id="manage-count">0</span>)</h3>
+            <div class="manage-list" id="manage-list"></div>
+        </div>
+
+        <div class="modal-footer">
+            <span class="add-result" id="add-result"></span>
+            <button class="btn-done" onclick="closeManageModal()">完成</button>
+        </div>
+    </div>
+</div>
+
 <script src="js/app.js"></script>
 </body>
 </html>

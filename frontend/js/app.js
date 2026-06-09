@@ -330,3 +330,98 @@ document.addEventListener('DOMContentLoaded', function () {
     fetchAll();
     setInterval(fetchAll, REFRESH_INTERVAL);
 });
+
+// ═══════════════════════════════════════════════════════
+// 自选股管理
+// ═══════════════════════════════════════════════════════
+
+function openManageModal() {
+    document.getElementById('manage-modal').classList.add('active');
+    document.getElementById('add-result').textContent = '';
+    document.getElementById('add-result').className = 'add-result';
+    document.getElementById('add-code').value = '';
+    document.getElementById('add-name').value = '';
+    loadManageList();
+}
+
+function closeManageModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('manage-modal').classList.remove('active');
+}
+
+async function loadManageList() {
+    try {
+        const resp = await fetch(`${API_BASE}/watchlist`);
+        const data = await resp.json();
+        const list = data.stocks || [];
+
+        document.getElementById('manage-count').textContent = list.length;
+
+        const container = document.getElementById('manage-list');
+        container.innerHTML = list.map(s => `
+            <div class="manage-item">
+                <div>
+                    <span class="mi-name">${s.name}</span>
+                    <span class="mi-code">${s.code}</span>
+                </div>
+                <button class="btn-remove" onclick="removeStock('${s.code}')">删除</button>
+            </div>
+        `).join('');
+    } catch (err) {
+        console.error('加载自选股列表失败:', err);
+    }
+}
+
+async function addStock() {
+    const exchange = document.getElementById('add-exchange').value;
+    const codeRaw = document.getElementById('add-code').value.trim();
+    const name = document.getElementById('add-name').value.trim();
+    const resultEl = document.getElementById('add-result');
+
+    if (!codeRaw || codeRaw.length !== 6 || !/^\d{6}$/.test(codeRaw)) {
+        resultEl.textContent = '❌ 请输入6位数字股票代码';
+        resultEl.className = 'add-result error';
+        return;
+    }
+    if (!name) {
+        resultEl.textContent = '❌ 请输入股票名称';
+        resultEl.className = 'add-result error';
+        return;
+    }
+
+    const code = exchange + codeRaw;
+
+    try {
+        const resp = await fetch(`${API_BASE}/watchlist/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, name }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const result = await resp.json();
+        resultEl.textContent = `✅ 已添加 ${name} (${result.count}只)`;
+        resultEl.className = 'add-result success';
+
+        document.getElementById('add-code').value = '';
+        document.getElementById('add-name').value = '';
+        loadManageList();
+    } catch (err) {
+        resultEl.textContent = `❌ ${err.message}`;
+        resultEl.className = 'add-result error';
+    }
+}
+
+async function removeStock(code) {
+    try {
+        const resp = await fetch(`${API_BASE}/watchlist/${code}`, { method: 'DELETE' });
+        if (!resp.ok) throw new Error('删除失败');
+        loadManageList();
+    } catch (err) {
+        console.error('删除失败:', err);
+    }
+}
