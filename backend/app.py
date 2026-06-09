@@ -482,25 +482,13 @@ async def get_stocks():
 
 @app.get("/api/market-overview")
 async def get_market_overview():
-    """获取市场涨跌家数概览"""
+    """获取全市场涨跌家数（东方财富）"""
     cache_key = "market_overview"
     cached = _get_cached(cache_key)
     if cached:
         return JSONResponse(content=cached)
 
-    stocks_data = await _fetch_sina(list(_watchlist.keys()))
-    advance = decline = even = 0
-    for d in stocks_data.values():
-        pct = d.get("change_pct", 0)
-        if pct > 0:
-            advance += 1
-        elif pct < 0:
-            decline += 1
-        else:
-            even += 1
-
-    result = {"advance": advance, "decline": decline, "even": even,
-              "total": advance + decline + even}
+    result = await _get_market_overview_data()
     _set_cache(cache_key, result)
     return JSONResponse(content=result)
 
