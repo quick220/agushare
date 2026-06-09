@@ -238,7 +238,7 @@ async def _fetch_tencent_intraday(code: str) -> Optional[dict]:
         data = raw.get("data", {})
         code_data = data.get(code, {})
         inner = code_data.get("data", {})
-        tdata = inner.get("tdata", [])
+        tdata = inner.get("data", [])
 
         prePrice = code_data.get("prePrice", 0) or inner.get("prePrice", 0) or 0
         if not prePrice:
@@ -247,11 +247,12 @@ async def _fetch_tencent_intraday(code: str) -> Optional[dict]:
 
         trends = []
         for t in tdata:
-            if len(t) >= 3:
+            parts = t.split()
+            if len(parts) >= 3:
                 trends.append({
-                    "time": t[0],
-                    "price": float(t[1]) if t[1] else 0,
-                    "volume": float(t[2]) if t[2] else 0,
+                    "time": parts[0],
+                    "price": float(parts[1]) if parts[1] else 0,
+                    "volume": float(parts[2]) if parts[2] else 0,
                 })
 
         if trends:
@@ -813,11 +814,18 @@ async def _get_stocks_data() -> dict:
 
 
 async def _get_market_overview_data() -> dict:
-    """获取全市场涨跌家数（多源降级 + 指数退避）"""
-    # 源1：乐咕乐股网（主用，稳定可靠）
-    result = await _fetch_market_activity_from_legulegu()
-    if result:
-        return result
+    """获取全市场涨跌家数（多源降级 + 指数退避 + 超时保护）"""
+    try:
+        # 源1：乐咕乐股网（主用），总超时 8 秒
+        result = await asyncio.wait_for(
+            _fetch_market_activity_from_legulegu(), timeout=8.0
+        )
+        if result:
+            return result
+    except asyncio.TimeoutError:
+        log.warning("乐咕乐股请求超时(8s)")
+    except Exception as e:
+        log.warning(f"乐咕乐股请求异常: {e}")
 
     # 源2：东方财富（备选，部分网络不可达）
     result = await _fetch_market_activity_from_eastmoney()
