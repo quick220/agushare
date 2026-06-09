@@ -8,6 +8,7 @@ import json
 import time
 import re
 import asyncio
+import socket
 import logging
 from typing import Dict, Optional
 
@@ -16,6 +17,25 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+
+# ─── IPv4 辅助（armcube 上东方财富 API 的 IPv6 连接不稳定）───────
+_EM_HOST = "push2his.eastmoney.com"
+_EM_IPV4 = None  # lazy resolve
+
+
+def _resolve_em_ipv4() -> str:
+    """解析东方财富域名到 IPv4 地址（缓存结果）"""
+    global _EM_IPV4
+    if _EM_IPV4 is None:
+        try:
+            addrs = socket.getaddrinfo(_EM_HOST, 80, socket.AF_INET)
+            _EM_IPV4 = addrs[0][4][0]
+            log.info(f"东方财富 API 已解析到 IPv4: {_EM_IPV4}")
+        except Exception as e:
+            log.warning(f"解析东方财富域名失败: {e}")
+            _EM_IPV4 = _EM_HOST  # fallback 到域名
+    return _EM_IPV4
 
 # ─── 日志 ────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -151,11 +171,13 @@ async def _fetch_em_intraday(code: str, retries: int = 2) -> Optional[dict]:
         "ndays": "1",
         "iscr": "0",
     }
-    url = "http://push2his.eastmoney.com/api/qt/stock/trends2/get"
+    ip = _resolve_em_ipv4()
+    url = f"http://{ip}/api/qt/stock/trends2/get"
+    headers = {**EM_HEADERS, "Host": _EM_HOST}
 
     for attempt in range(retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=EM_HEADERS) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
                 resp = await client.get(url, params=params)
                 raw = resp.json()
                 d = raw.get("data", {})
@@ -207,11 +229,13 @@ async def _fetch_em_kline(code: str, days: int = 120) -> Optional[dict]:
         "lmt": str(days),
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
     }
-    url = "http://push2his.eastmoney.com/api/qt/stock/kline/get"
+    ip = _resolve_em_ipv4()
+    url = f"http://{ip}/api/qt/stock/kline/get"
+    headers = {**EM_HEADERS, "Host": _EM_HOST}
 
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=EM_HEADERS) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0), headers=headers) as client:
                 resp = await client.get(url, params=params)
                 raw = resp.json()
                 d = raw.get("data", {})
