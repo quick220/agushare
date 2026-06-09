@@ -822,15 +822,22 @@ async def _get_market_overview_data() -> dict:
         )
         if result:
             return result
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         log.warning("乐咕乐股请求超时(8s)")
     except Exception as e:
         log.warning(f"乐咕乐股请求异常: {e}")
 
-    # 源2：东方财富（备选，部分网络不可达）
-    result = await _fetch_market_activity_from_eastmoney()
-    if result:
-        return result
+    try:
+        # 源2：东方财富（备选，部分网络不可达），总超时 8 秒
+        result = await asyncio.wait_for(
+            _fetch_market_activity_from_eastmoney(), timeout=8.0
+        )
+        if result:
+            return result
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        log.warning("东方财富涨跌家数请求超时(8s)")
+    except Exception as e:
+        log.warning(f"东方财富涨跌家数请求异常: {e}")
 
     log.error("涨跌家数所有数据源均失败")
     return {"advance": 0, "decline": 0, "even": 0, "total": 0}
