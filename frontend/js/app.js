@@ -35,6 +35,9 @@ function updateIndices(data) {
         { code: 'sh000001', name: '上证指数' },
         { code: 'sz399001', name: '深证成指' },
         { code: 'sz399006', name: '创业板指' },
+        { code: 'sh000688', name: '科创50' },
+        { code: 'bj899050', name: '北证50' },
+        { code: 'sh518880', name: '黄金ETF' },
     ];
 
     indices.forEach((item, idx) => {
@@ -484,7 +487,7 @@ function updateNews(data) {
     items.forEach(function (item) {
         const tags = (item.subjects || []).slice(0, 2);
         const tagHtml = tags.map(function (s) {
-            return '<span class="nc-tag">' + escapeHtml(s) + '</span>';
+            return '<span class="nc-tag">' + escapeHtml(s.subject_name || s) + '</span>';
         }).join('');
 
         html += '<div class="news-card">'

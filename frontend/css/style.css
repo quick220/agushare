@@ -28,6 +28,7 @@ body {
     overflow: hidden;
     width: 100vw;
     height: 100vh;
+    font-size: 20px;  /* 电视远距离观看，基础字号放大 */
 }
 
 /* ─── 背景网格 ─── */
@@ -206,7 +207,7 @@ body::before {
 .main-content {
     flex: 1;
     display: grid;
-    grid-template-columns: 260px 1fr 1.3fr;
+    grid-template-columns: 1fr 260px 1.3fr;
     gap: 8px;
     min-height: 0;
 }
@@ -222,10 +223,10 @@ body::before {
 }
 
 .panel-title {
-    font-size: 0.8em;
+    font-size: 1.15em;
     color: var(--text-secondary);
     letter-spacing: 2px;
-    padding-bottom: 6px;
+    padding-bottom: 8px;
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
     display: flex;
@@ -301,16 +302,16 @@ body::before {
 }
 
 .news-card .nc-time {
-    font-size: 0.7em;
-    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
     color: var(--text-muted);
-    margin-bottom: 3px;
+    font-family: 'Courier New', monospace;
+    flex-shrink: 0;
 }
 
 .news-card .nc-text {
-    font-size: 0.78em;
-    line-height: 1.5;
+    font-size: 0.95em;
     color: var(--text-primary);
+    line-height: 1.35;
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
@@ -351,8 +352,8 @@ body::before {
 .stock-table .table-header {
     display: grid;
     grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
-    padding: 5px 8px;
-    font-size: 0.7em;
+    padding: 8px 10px;
+    font-size: 0.95em;
     color: var(--text-muted);
     letter-spacing: 1px;
     border-bottom: 1px solid var(--border-color);
@@ -375,12 +376,22 @@ body::before {
     border-radius: 2px;
 }
 
+.stock-table .table-header {
+    display: grid;
+    grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
+    padding: 8px 10px;
+    font-size: 0.95em;
+    border-bottom: 1px solid rgba(42, 48, 80, 0.3);
+    transition: background 0.15s;
+    align-items: center;
+    flex-shrink: 0;
+}
+
 .stock-row {
     display: grid;
     grid-template-columns: 2.2fr 1.3fr 1.2fr 1fr;
-    padding: 5px 8px;
-    font-size: 0.82em;
-    border-bottom: 1px solid rgba(42, 48, 80, 0.3);
+    padding: 7px 10px;
+    font-size: 1.05em;
     transition: background 0.15s;
     align-items: center;
 }
@@ -456,7 +467,7 @@ body::before {
 }
 
 .chart-section-title {
-    font-size: 0.65em;
+    font-size: 0.85em;
     color: var(--text-muted);
     letter-spacing: 1px;
     padding: 2px 6px;
@@ -468,17 +479,22 @@ body::before {
     min-height: 0;
 }
 
-/* Sizing ratios for the 3 chart sections */
-.chart-section-pie {
-    flex: 1.2;
+/* ─── K线图特殊样式 ─── */
+.chart-section-kline {
+    flex: 2.5;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
+/* ─── 分时图中间比例 ─── */
 .chart-section-timeline {
     flex: 2.2;
 }
 
-.chart-section-kline {
-    flex: 2.6;
+/* ─── 饼图比例 ─── */
+.chart-section-pie {
+    flex: 1.2;
 }
 
 /* ─── 页脚 ─── */

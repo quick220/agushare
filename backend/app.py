@@ -55,11 +55,14 @@ app.add_middleware(
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "5"))
 STOCKS_FILE = os.environ.get("STOCKS_FILE", "/data/stocks.json")
 
-# ─── 三大指数代码 ────────────────────────────────────
+# ─── 指数代码（前三大指数 + 科创/北交/黄金）───────────
 INDEX_CODES = {
     "sh000001": "上证指数",
     "sz399001": "深证成指",
     "sz399006": "创业板指",
+    "sh000688": "科创50",
+    "bj899050": "北证50",
+    "sh518880": "黄金ETF",
 }
 
 # ─── 默认自选股（首次启动时写入） ──────────────────────
@@ -628,18 +631,28 @@ async def _get_stocks_data() -> dict:
 
 
 async def _get_market_overview_data() -> dict:
-    stocks_data = await _fetch_sina(list(_watchlist.keys()))
-    advance = decline = even = 0
-    for d in stocks_data.values():
-        pct = d.get("change_pct", 0)
-        if pct > 0:
-            advance += 1
-        elif pct < 0:
-            decline += 1
-        else:
-            even += 1
-    return {"advance": advance, "decline": decline, "even": even,
-            "total": advance + decline + even}
+    """从东方财富获取全市场涨跌家数"""
+    ip = _resolve_em_ipv4()
+    url = f"http://{ip}/api/qt/stock/get"
+    params = {
+        "secid": "1.000001",
+        "fields": "f169,f170,f171",
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+    }
+    headers = {**EM_HEADERS, "Host": _EM_HOST}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), headers=headers) as client:
+            resp = await client.get(url, params=params)
+            raw = resp.json()
+            d = raw.get("data", {})
+            advance = d.get("f169", 0) or 0
+            decline = d.get("f170", 0) or 0
+            even = d.get("f171", 0) or 0
+            return {"advance": advance, "decline": decline, "even": even,
+                    "total": advance + decline + even}
+    except Exception as e:
+        log.warning(f"东方财富涨跌家数获取失败: {e}")
+        return {"advance": 0, "decline": 0, "even": 0, "total": 0}
 
 
 async def _fetch_cls_news() -> dict:
