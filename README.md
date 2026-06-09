@@ -20,6 +20,7 @@
 - 📰 **实时快讯**：财联社电报纵列卡片，自动滚动更新
 - 🔄 **自动刷新**：每 5 秒拉取最新行情
 - 🖥️ **HDMI 全屏显示**：surf 浏览器 + Mali GPU 加速，支持开机自启
+- 📡 **红外遥控开关**：按遥控器 Power 键切换看板显示开/关
 - 🎨 **赛博朋克暗色主题**：红涨绿跌，大字适配电视频距
 - 🔧 **零依赖构建**：纯 HTML/CSS/JS + Python FastAPI
 
@@ -102,6 +103,49 @@ bash deploy/kiosk.sh --install
 - Mali GPU 加速（lima 驱动）
 - 防休眠：每 55 秒微移鼠标
 
+## 红外遥控开关
+
+利用机顶盒自带的红外接收器，可以用遥控器 **Power 键** 切换看板显示的开/关。
+
+### 安装
+
+```bash
+# 安装依赖（v4l-utils 提供 ir-ctl 解码工具）
+apt-get install -y v4l-utils
+
+# 安装红外切换脚本
+cp ir_toggle.py /root/agushare/
+cp deploy/ir-toggle.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ir-toggle.service
+```
+
+### 工作原理
+
+```
+按遥控器 Power 键
+  → meson-ir 红外接收器 (NEC 协议)
+  → ir-ctl 解码 scancode=0x22dc
+  → ir_toggle.py 检测到 Power 键
+  → systemctl start/stop agushare-kiosk
+  → 电视显示/隐藏 A 股看板
+```
+
+脚本启动时自动设置接收器协议为 **NEC**（重启不退失），监听 `/dev/lirc0` 的脉冲信号。按下 Power 键时检测 `surf` 进程是否存在 → 运行则关闭看板，否则启动看板。
+
+内置 2 秒防抖，避免多次触发。
+
+### 遥控器键码
+
+默认 Power 键码为 `nec:0x22dc`。如果你的遥控器不同，用以下命令捕获：
+
+```bash
+ir-ctl -r -d /dev/lirc0
+# 按目标键，输出脉冲串
+```
+
+然后用 `ir_toggle.py` 中的 `SCANCODE` 变量替换为你解码出的值。
+
 ## 默认自选股
 
 | 代码 | 名称 | 市场 |
@@ -168,10 +212,12 @@ agushare/
 │   └── js/app.js            ← 行情渲染 + ECharts图表 + 自选股管理
 ├── nginx/
 │   └── default.conf         ← 反向代理配置（端口8081）
+├── ir_toggle.py               ← 红外遥控切换脚本
 ├── deploy/
 │   ├── setup.sh             ← 一键部署脚本
 │   ├── kiosk.sh             ← HDMI全屏启动脚本（surf + Xorg）
-│   └── agushare-kiosk.service ← 开机自启 systemd 服务
+│   ├── agushare-kiosk.service ← 看板开机自启 systemd 服务
+│   └── ir-toggle.service    ← 红外遥控 systemd 服务
 └── docker-compose.yml       ← Podman编排（备选）
 ```
 
@@ -187,6 +233,7 @@ agushare/
 | GPU | Mali lima 开源驱动 | S905L 盒子 GPU 加速 |
 | 防休眠 | xdotool 鼠标微移 | 每55秒防止屏幕关闭 |
 | 部署 | systemd + Podman | 开机自启，容器可选 |
+| 红外遥控 | ir-ctl (v4l-utils) | NEC 协议，Power 键切换显示 |
 
 ## 自定义配置
 
@@ -200,6 +247,7 @@ agushare/
 - 东方财富 `push2his` 接口在部分网络环境下 IPv6 断连，已强制 IPv4 解析
 - 乐咕乐股网偶发 504 网关超时，后端 5 秒超时降级
 - 787MB 内存高度紧张，GPU 加速与 WebKit 渲染需平衡内存占用
+- 红外遥控器协议可能因机顶盒型号而异，需自行捕获键码
 
 ## License
 

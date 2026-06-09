@@ -1,0 +1,14 @@
+[Unit]
+Description=IR Remote Toggle for Agushare Kiosk Display
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/root/agushare/ir_toggle.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
