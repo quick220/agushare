@@ -1,18 +1,18 @@
 [Unit]
-Description=A股大屏 - Kiosk 电视全屏显示
-After=network.target network-online.target
+Description=Agushare Kiosk Display
+After=network-online.target agushare-backend.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-Environment=DISPLAY=:0
-ExecStartPre=/bin/sleep 10
-ExecStart=/bin/bash /root/agushare/deploy/kiosk.sh
+ExecStart=/root/agushare/deploy/kiosk.sh
 Restart=always
-RestartSec=10
-KillMode=process
-TimeoutStartSec=120
+RestartSec=3
+Environment=DISPLAY=:0
+Environment=WEBKIT_DISABLE_COMPOSITING_MODE=1
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
